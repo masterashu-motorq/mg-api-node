@@ -1,6 +1,14 @@
 var https = require('https');
 var http = require('http');
 var zlib = require('zlib');
+
+let keepaliveAgent = new https.Agent({
+    maxSockets: parseInt(process.env.GEOTAB_MAX_SOCKETS) || 50,
+    maxFreeSockets: parseInt(process.env.GEOTAB_MAX_FREE_SOCKETS) || 50,
+    timeout: 60000,
+    keepAlive: true
+});
+
 module.exports = function (u, p, d, s, o, sId) {
     var credentials,
         userName = u,
@@ -20,8 +28,8 @@ module.exports = function (u, p, d, s, o, sId) {
     }
 
     if (!!sessionId) {
-        if (!database) {
-            throw new Error('Must supply database')
+        if (!database || directServer === 'my.geotab.com') {
+            throw new Error('Must supply database and server')
         }
 
         credentials = {
@@ -34,9 +42,10 @@ module.exports = function (u, p, d, s, o, sId) {
         throw new Error('Must supply password')
     }
 
-    var post = function (method, params, callback, timeout, timeoutCallback) {
+    var post = function (method, params, callback) {
         var paramsStr = getRpc(method, params);
         var option = getOptions(method, paramsStr);
+        option.agent = keepaliveAgent;
         var done = function (err, data) {
             if (err) {
                 callback(err, data);
@@ -84,12 +93,6 @@ module.exports = function (u, p, d, s, o, sId) {
                 done(e, null);
             });
         });
-
-        // If timeout was provided and requesting with http, we add a timeout to the request
-        if (typeof timeout === 'number' && !options.ssl){
-            typeof timoutCallback === 'function' ? post_req.setTimeout(timeout, timeoutCallback) : post_req.setTimeout(timeout);
-        }
-
         post_req.on('error', function (err) {
             callback(err, null)
         });
@@ -130,7 +133,7 @@ module.exports = function (u, p, d, s, o, sId) {
         return 'JSON-RPC=' + encodeURIComponent(rpcString);
     };
 
-    var call = function (method, params, callback, timeout = null, timeoutCallback = null) {
+    var call = function (method, params, callback) {
         var doAuthenticate = function (callback) {
             authenticate(function (err, data) {
                 if (err) {
@@ -176,10 +179,10 @@ module.exports = function (u, p, d, s, o, sId) {
                 tryCount = 0;
                 callback(err, data);
             }
-        }, timeout, timeoutCallback);
+        });
     };
 
-    var multicall = function (calls, callback, timeout = null, timeoutCallback = null) {
+    var multicall = function (calls, callback) {
         var formattedCalls;
 
         if (!calls) {
@@ -202,7 +205,7 @@ module.exports = function (u, p, d, s, o, sId) {
 
         call("ExecuteMultiCall", {
             calls: formattedCalls
-        }, callback, timeout, timeoutCallback);
+        }, callback);
     };
 
     var authenticate = function (callback) {
